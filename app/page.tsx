@@ -76,7 +76,7 @@ export default function Home() {
                 backgroundClip: "text",
               }}
             >
-              PeakPlay
+              PlayIt
             </h1>
             <p className="text-[11px] text-white/40 font-light tracking-[0.4px] mt-0.5">
               Auto-plays the best part of every song

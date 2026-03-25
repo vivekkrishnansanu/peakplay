@@ -1,6 +1,6 @@
 {
-  "name": "PeakPlay",
-  "short_name": "PeakPlay",
+  "name": "PlayIt",
+  "short_name": "PlayIt",
   "description": "Auto-plays the most-replayed part of trending songs",
   "start_url": "/",
   "display": "standalone",

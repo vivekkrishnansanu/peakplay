@@ -125,9 +125,9 @@ const MAX_POOL_SIZE = 180;
 
 declare global {
   // eslint-disable-next-line no-var
-  var __peakplaySongCache: Record<Language, CachedLanguagePool> | undefined;
+  var __playitSongCache: Record<Language, CachedLanguagePool> | undefined;
   // eslint-disable-next-line no-var
-  var __peakplaySongRefresh: Partial<Record<Language, Promise<void>>> | undefined;
+  var __playitSongRefresh: Partial<Record<Language, Promise<void>>> | undefined;
 }
 
 function initCache(): Record<Language, CachedLanguagePool> {
@@ -141,8 +141,8 @@ function initCache(): Record<Language, CachedLanguagePool> {
   };
 }
 
-const SONG_CACHE = globalThis.__peakplaySongCache ?? (globalThis.__peakplaySongCache = initCache());
-const SONG_REFRESH = globalThis.__peakplaySongRefresh ?? (globalThis.__peakplaySongRefresh = {});
+const SONG_CACHE = globalThis.__playitSongCache ?? (globalThis.__playitSongCache = initCache());
+const SONG_REFRESH = globalThis.__playitSongRefresh ?? (globalThis.__playitSongRefresh = {});
 
 function shuffle<T>(arr: T[]): T[] {
   const out = [...arr];

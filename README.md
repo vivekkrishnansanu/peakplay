@@ -1,4 +1,4 @@
-# PeakPlay 🎵
+# PlayIt 🎵
 
 **Auto-plays the most-replayed peak moment of trending songs — hands-free.**
 

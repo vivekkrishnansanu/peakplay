@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "PeakPlay — Peak Moments Radio",
+  title: "PlayIt — Peak Moments Radio",
   description: "Automatically plays the best, most-replayed part of trending songs.",
   manifest: "/manifest.json",
 };
