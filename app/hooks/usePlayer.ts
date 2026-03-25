@@ -7,6 +7,9 @@ interface YTPlayerLike {
   setVolume: (value: number) => void;
   loadVideoById: (opts: { videoId: string; startSeconds: number; endSeconds?: number }) => void;
   stopVideo: () => void;
+  pauseVideo?: () => void;
+  playVideo?: () => void;
+  getPlayerState?: () => number;
   getCurrentTime?: () => number;
   getDuration?: () => number;
 }
@@ -20,6 +23,7 @@ interface YTNamespaceLike {
     ENDED: number;
     BUFFERING: number;
     PLAYING: number;
+    PAUSED: number;
   };
   Player: new (
     elementId: string,
@@ -44,7 +48,16 @@ declare global {
   }
 }
 
-export type PlayerStatus = "idle" | "loading" | "seeking" | "playing" | "fading";
+export type PlayerStatus = "idle" | "loading" | "seeking" | "playing" | "paused" | "fading";
+
+export interface QuotaInfo {
+  source: "estimated";
+  day: string;
+  used: number;
+  limit: number;
+  remaining: number;
+  usagePct: number;
+}
 
 export function usePlayer(initialLang: Language = "english") {
   const playerRef       = useRef<YTPlayerLike | null>(null);
@@ -54,7 +67,9 @@ export function usePlayer(initialLang: Language = "english") {
   const fadeIntRef      = useRef<ReturnType<typeof setInterval> | null>(null);
   const fadeTimerRef    = useRef<ReturnType<typeof setTimeout> | null>(null);
   const progIntRef      = useRef<ReturnType<typeof setInterval> | null>(null);
+  const durApplyRef     = useRef<ReturnType<typeof setTimeout> | null>(null);
   const queueRef        = useRef<Song[]>([]);
+  const historyRef      = useRef<Song[]>([]);
   const clipDurRef      = useRef(30);
   const langRef         = useRef<Language>(initialLang);
   const songRef         = useRef<Song | null>(null);
@@ -78,8 +93,12 @@ export function usePlayer(initialLang: Language = "english") {
   const [clipDur,   setClipDurState] = useState(30);
   const [liked,     setLiked]       = useState<Song[]>([]);
   const [discoverError, setDiscoverError] = useState<string | null>(null);
+  const [discoverWarning, setDiscoverWarning] = useState<string | null>(null);
+  const [quotaInfo, setQuotaInfo] = useState<QuotaInfo | null>(null);
   const [isFullSong, setIsFullSong] = useState(false);
   const [fullDuration, setFullDuration] = useState(0);
+  const [canPrev, setCanPrev] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
 
   useEffect(() => {
     langRef.current = lang;
@@ -98,6 +117,7 @@ export function usePlayer(initialLang: Language = "english") {
     if (fadeIntRef.current)  clearInterval(fadeIntRef.current);
     if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current);
     if (progIntRef.current)  clearInterval(progIntRef.current);
+    if (durApplyRef.current) clearTimeout(durApplyRef.current);
     playingRef.current = false;
   }, []);
 
@@ -159,6 +179,7 @@ export function usePlayer(initialLang: Language = "english") {
     setProgress(0);
     setElapsed(0);
     setFullDuration(0);
+    setIsPaused(false);
     setStatus("loading");
     playerRef.current.setVolume(0);
     if (full) {
@@ -188,7 +209,9 @@ export function usePlayer(initialLang: Language = "english") {
       method: "GET",
       cache: "no-store",
     });
-    const payload = await response.json() as { songs?: Song[]; error?: string };
+    const payload = await response.json() as { songs?: Song[]; error?: string; warning?: string; quota?: QuotaInfo };
+    setDiscoverWarning(payload.warning ?? null);
+    setQuotaInfo(payload.quota ?? null);
     if (!response.ok) {
       setDiscoverError(payload.error ?? "Failed to load songs.");
       return [];
@@ -252,6 +275,11 @@ export function usePlayer(initialLang: Language = "english") {
           if (!candidate) continue;
           if (candidate.id === opts?.excludeId || seen.has(candidate.id)) continue;
 
+          const current = songRef.current;
+          if (current && current.id !== candidate.id) {
+            historyRef.current.push(current);
+            setCanPrev(true);
+          }
           seen.add(candidate.id);
           playSong(candidate, "clip");
           if (queueRef.current.length < 4) {
@@ -297,11 +325,19 @@ export function usePlayer(initialLang: Language = "english") {
     if (e.data === window.YT.PlayerState.BUFFERING) setStatus("seeking");
     if (e.data === window.YT.PlayerState.ENDED) {
       if (progIntRef.current) clearInterval(progIntRef.current);
+      setIsPaused(false);
       void next();
+      return;
+    }
+    if (e.data === window.YT.PlayerState.PAUSED) {
+      if (progIntRef.current) clearInterval(progIntRef.current);
+      setIsPaused(true);
+      setStatus("paused");
       return;
     }
     if (e.data === window.YT.PlayerState.PLAYING && !playingRef.current) {
       playingRef.current = true;
+      setIsPaused(false);
       clipStartRef.current = Date.now();
       setStatus("playing");
       startProgress();
@@ -315,8 +351,11 @@ export function usePlayer(initialLang: Language = "english") {
     langRef.current = l;
     setLangState(l);
     queueRef.current = [];
+    historyRef.current = [];
+    setCanPrev(false);
     fullModeRef.current = false;
     setIsFullSong(false);
+    setIsPaused(false);
     setStatus("loading");
     await next();
   }, [next]);
@@ -327,6 +366,17 @@ export function usePlayer(initialLang: Language = "english") {
     const normalized = Math.round(clamped / 5) * 5;
     clipDurRef.current = normalized;
     setClipDurState(normalized);
+
+    // Re-apply the new clip duration on the currently playing song (clip mode only).
+    // Debounced to avoid repeated reloads while dragging the slider.
+    if (!fullModeRef.current && songRef.current && playerRef.current && ytReadyRef.current) {
+      if (durApplyRef.current) clearTimeout(durApplyRef.current);
+      durApplyRef.current = setTimeout(() => {
+        const current = songRef.current;
+        if (!current || fullModeRef.current) return;
+        playSong(current, "clip");
+      }, 220);
+    }
   }, []);
 
   // ── like / unlike ──────────────────────────────────────────────────────────
@@ -346,6 +396,49 @@ export function usePlayer(initialLang: Language = "english") {
     const current = songRef.current;
     if (!current) return;
     playSong(current, "full");
+  }, [playSong]);
+
+  const togglePause = useCallback(() => {
+    const player = playerRef.current;
+    if (!player || !songRef.current) return;
+    const yt = typeof window !== "undefined" ? window.YT : undefined;
+    const rawState = player.getPlayerState?.();
+    const playerIsPaused = yt ? rawState === yt.PlayerState.PAUSED : false;
+    const playerIsPlaying = yt ? rawState === yt.PlayerState.PLAYING : false;
+
+    const shouldResume = isPaused || status === "paused" || playerIsPaused;
+    if (shouldResume) {
+      // Ensure PLAYING transition runs reliably after resume.
+      playingRef.current = false;
+      player.playVideo?.();
+      setIsPaused(false);
+      setStatus("seeking");
+      return;
+    }
+
+    const canPause = status === "playing" || status === "seeking" || status === "loading" || playerIsPlaying;
+    if (canPause) {
+      if (fadeIntRef.current) clearInterval(fadeIntRef.current);
+      if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current);
+      if (progIntRef.current) clearInterval(progIntRef.current);
+      player.pauseVideo?.();
+      playingRef.current = false;
+      setIsPaused(true);
+      setStatus("paused");
+    }
+  }, [isPaused, status]);
+
+  const prev = useCallback(() => {
+    const previousSong = historyRef.current.pop();
+    setCanPrev(historyRef.current.length > 0);
+    if (!previousSong) return;
+
+    const current = songRef.current;
+    if (current && current.id !== previousSong.id && !queueRef.current.some((q) => q.id === current.id)) {
+      queueRef.current.unshift(current);
+    }
+
+    playSong(previousSong, "clip");
   }, [playSong]);
 
   // ── YouTube IFrame API bootstrap ───────────────────────────────────────────
@@ -401,7 +494,7 @@ export function usePlayer(initialLang: Language = "english") {
   }, [onStateChange]);
 
   return {
-    song, status, progress, elapsed, clipDur, lang, liked, discoverError, isFullSong, fullDuration,
-    setClipDur, loadLang, next, toggleLike, isLiked, playFullCurrent,
+    song, status, progress, elapsed, clipDur, lang, liked, discoverError, discoverWarning, quotaInfo, isFullSong, fullDuration, canPrev, isPaused,
+    setClipDur, loadLang, next, prev, togglePause, toggleLike, isLiked, playFullCurrent,
   };
 }

@@ -11,8 +11,8 @@ import Toast from "./components/Toast";
 
 export default function Home() {
   const {
-    song, status, progress, elapsed, clipDur, lang, liked, discoverError, isFullSong, fullDuration,
-    setClipDur, loadLang, next, toggleLike, isLiked, playFullCurrent,
+    song, status, progress, elapsed, clipDur, lang, liked, discoverError, discoverWarning, isFullSong, fullDuration, canPrev, isPaused,
+    setClipDur, loadLang, next, prev, togglePause, toggleLike, isLiked, playFullCurrent,
   } = usePlayer("english");
 
   const [toastMsg,  setToastMsg]  = useState("");
@@ -37,6 +37,16 @@ export default function Home() {
     if (!song) return;
     playFullCurrent();
     showToast(`Playing full song — ${song.title}`);
+  };
+
+  const handlePrev = () => {
+    if (!canPrev) return;
+    prev();
+  };
+
+  const handlePauseResume = () => {
+    if (!song) return;
+    togglePause();
   };
 
   return (
@@ -100,6 +110,12 @@ export default function Home() {
           </div>
         )}
 
+        {discoverWarning && (
+          <div className="w-full mt-3 mb-1 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-100">
+            {discoverWarning}
+          </div>
+        )}
+
         {/* Player */}
         <PlayerCard
           song={song}
@@ -109,6 +125,8 @@ export default function Home() {
           clipDur={clipDur}
           isFullSong={isFullSong}
           fullDuration={fullDuration}
+          isPaused={isPaused}
+          onTogglePause={handlePauseResume}
         />
 
         {/* Duration slider */}
@@ -139,6 +157,20 @@ export default function Home() {
               transition-all duration-200 hover:bg-white/10 active:scale-[0.98]"
           >
             {isFullSong ? "Full Playing" : "Play Full"}
+          </button>
+
+          {/* Prev */}
+          <button
+            onClick={handlePrev}
+            disabled={!canPrev}
+            className={`h-[52px] px-4 rounded-full border text-[13px] font-medium tracking-[0.2px]
+              transition-all duration-200 active:scale-[0.98]
+              ${canPrev
+                ? "border-white/15 bg-white/5 text-white hover:bg-white/10"
+                : "border-white/10 bg-white/5 text-white/30 cursor-not-allowed"
+              }`}
+          >
+            ← Prev
           </button>
 
           {/* Next */}

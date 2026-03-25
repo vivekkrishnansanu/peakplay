@@ -119,15 +119,35 @@ interface CachedLanguagePool {
   lastError?: string;
 }
 
+interface QuotaTracker {
+  dayKey: string;
+  estimatedUnitsUsed: number;
+  estimatedDailyLimit: number;
+}
+
+interface QuotaStatus {
+  source: "estimated";
+  day: string;
+  used: number;
+  limit: number;
+  remaining: number;
+  usagePct: number;
+}
+
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 const QUOTA_BACKOFF_MS = 6 * 60 * 60 * 1000; // 6 hours
 const MAX_POOL_SIZE = 180;
+const SEARCH_API_UNITS = 100;
+const VIDEOS_API_UNITS = 1;
+const DEFAULT_YOUTUBE_DAILY_LIMIT = 10_000;
 
 declare global {
   // eslint-disable-next-line no-var
   var __playitSongCache: Record<Language, CachedLanguagePool> | undefined;
   // eslint-disable-next-line no-var
   var __playitSongRefresh: Partial<Record<Language, Promise<void>>> | undefined;
+  // eslint-disable-next-line no-var
+  var __playitQuotaTracker: QuotaTracker | undefined;
 }
 
 function initCache(): Record<Language, CachedLanguagePool> {
@@ -143,6 +163,56 @@ function initCache(): Record<Language, CachedLanguagePool> {
 
 const SONG_CACHE = globalThis.__playitSongCache ?? (globalThis.__playitSongCache = initCache());
 const SONG_REFRESH = globalThis.__playitSongRefresh ?? (globalThis.__playitSongRefresh = {});
+
+function getDayKey(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function readDailyLimit(): number {
+  const envValue = Number(process.env.YOUTUBE_API_DAILY_QUOTA ?? "");
+  if (Number.isFinite(envValue) && envValue > 0) return Math.floor(envValue);
+  return DEFAULT_YOUTUBE_DAILY_LIMIT;
+}
+
+function initQuotaTracker(): QuotaTracker {
+  return {
+    dayKey: getDayKey(),
+    estimatedUnitsUsed: 0,
+    estimatedDailyLimit: readDailyLimit(),
+  };
+}
+
+const QUOTA_TRACKER = globalThis.__playitQuotaTracker ?? (globalThis.__playitQuotaTracker = initQuotaTracker());
+
+function ensureQuotaTrackerFreshDay(): void {
+  const dayKey = getDayKey();
+  if (QUOTA_TRACKER.dayKey !== dayKey) {
+    QUOTA_TRACKER.dayKey = dayKey;
+    QUOTA_TRACKER.estimatedUnitsUsed = 0;
+  }
+  QUOTA_TRACKER.estimatedDailyLimit = readDailyLimit();
+}
+
+function recordQuotaUnits(units: number): void {
+  ensureQuotaTrackerFreshDay();
+  QUOTA_TRACKER.estimatedUnitsUsed += Math.max(0, units);
+}
+
+function getQuotaStatus(): QuotaStatus {
+  ensureQuotaTrackerFreshDay();
+  const used = QUOTA_TRACKER.estimatedUnitsUsed;
+  const limit = Math.max(1, QUOTA_TRACKER.estimatedDailyLimit);
+  const remaining = Math.max(0, limit - used);
+  const usagePct = Math.min(100, Math.round((used / limit) * 100));
+  return {
+    source: "estimated",
+    day: QUOTA_TRACKER.dayKey,
+    used,
+    limit,
+    remaining,
+    usagePct,
+  };
+}
 
 function shuffle<T>(arr: T[]): T[] {
   const out = [...arr];
@@ -230,6 +300,7 @@ function normalizeTrendingItem(item: YouTubeTrendingItem): Song | null {
 
 async function fetchVideoDetailsByIds(videoIds: string[], apiKey: string): Promise<YouTubeTrendingItem[]> {
   if (!videoIds.length) return [];
+  recordQuotaUnits(VIDEOS_API_UNITS);
 
   const url = new URL(YOUTUBE_DATA_API_BASE);
   url.searchParams.set("part", "snippet,contentDetails,status");
@@ -253,6 +324,7 @@ async function fetchVideoDetailsByIds(videoIds: string[], apiKey: string): Promi
 }
 
 async function fetchLanguageSearchVideoIds(language: Language, apiKey: string): Promise<string[]> {
+  recordQuotaUnits(SEARCH_API_UNITS);
   const url = new URL(YOUTUBE_SEARCH_API_BASE);
   url.searchParams.set("part", "id");
   url.searchParams.set("type", "video");
@@ -379,6 +451,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({
         songs,
         warning: quotaBackoffActive ? "Serving cached songs due to YouTube quota backoff." : undefined,
+        quota: getQuotaStatus(),
       });
     }
   }
@@ -386,7 +459,7 @@ export async function GET(request: NextRequest) {
   try {
     await refreshLanguagePool(lang, apiKey);
     const songs = pickSongsFromPool(cache.songs, excluded, limit);
-    return NextResponse.json({ songs });
+    return NextResponse.json({ songs, quota: getQuotaStatus() });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     const reason =
@@ -413,6 +486,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({
         songs: cachedSongs,
         warning: `${friendly} Serving cached songs.`,
+        quota: getQuotaStatus(),
       });
     }
 
@@ -421,6 +495,7 @@ export async function GET(request: NextRequest) {
         songs: [],
         error: friendly,
         debug: message,
+        quota: getQuotaStatus(),
       },
       { status: 503 },
     );

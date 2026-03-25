@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { KeyboardEvent, useEffect, useState } from "react";
 import { Song, thumbUrl } from "../data/songs";
 import { PlayerStatus } from "../hooks/usePlayer";
 
@@ -11,9 +11,21 @@ interface Props {
   clipDur: number;
   isFullSong: boolean;
   fullDuration: number;
+  isPaused: boolean;
+  onTogglePause: () => void;
 }
 
-export default function PlayerCard({ song, status, progress, elapsed, clipDur, isFullSong, fullDuration }: Props) {
+export default function PlayerCard({
+  song,
+  status,
+  progress,
+  elapsed,
+  clipDur,
+  isFullSong,
+  fullDuration,
+  isPaused,
+  onTogglePause,
+}: Props) {
   const [thumbLoaded, setThumbLoaded] = useState(false);
   const [animKey, setAnimKey] = useState(0);
 
@@ -25,11 +37,32 @@ export default function PlayerCard({ song, status, progress, elapsed, clipDur, i
 
   const isPlaying = status === "playing";
   const isLoading = status === "loading" || status === "seeking" || status === "idle";
+  const canTogglePlayback = Boolean(song);
+
+  const handleThumbToggle = () => {
+    if (!canTogglePlayback) return;
+    onTogglePause();
+  };
+
+  const handleThumbKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (!canTogglePlayback) return;
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onTogglePause();
+    }
+  };
 
   return (
     <div className="w-full bg-white/5 border border-white/10 rounded-[18px] backdrop-blur-2xl overflow-hidden mt-5 mb-3">
       {/* Thumbnail */}
-      <div className="relative w-full aspect-video bg-[#0a0a16] overflow-hidden">
+      <div
+        role="button"
+        tabIndex={canTogglePlayback ? 0 : -1}
+        aria-label={isPaused ? "Resume playback" : "Pause playback"}
+        onClick={handleThumbToggle}
+        onKeyDown={handleThumbKeyDown}
+        className={`relative w-full aspect-video bg-[#0a0a16] overflow-hidden ${canTogglePlayback ? "cursor-pointer" : ""}`}
+      >
         {song && (
           <img
             key={song.id}
@@ -81,6 +114,18 @@ export default function PlayerCard({ song, status, progress, elapsed, clipDur, i
                 }}
               />
             ))}
+          </div>
+        )}
+
+        {/* Paused overlay */}
+        {isPaused && song && (
+          <div className="absolute inset-0 bg-black/35 flex flex-col items-center justify-center gap-2">
+            <div className="w-12 h-12 rounded-full border border-white/30 bg-black/45 backdrop-blur-md flex items-center justify-center text-white text-[18px]">
+              ▶
+            </div>
+            <p className="text-[11px] tracking-[0.4px] text-white/80 uppercase">
+              Paused - Tap to Resume
+            </p>
           </div>
         )}
 

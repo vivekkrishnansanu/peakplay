@@ -6,9 +6,11 @@ interface Props {
 }
 
 const MARKS = [15, 20, 25, 30, 40, 50, 60, 70, 80, 90];
+const MIN_DURATION = 15;
+const MAX_DURATION = 90;
 
 function normalizeDuration(raw: number): number {
-  const clamped = Math.max(15, Math.min(90, raw));
+  const clamped = Math.max(MIN_DURATION, Math.min(MAX_DURATION, raw));
   return Math.round(clamped / 5) * 5;
 }
 
@@ -32,8 +34,8 @@ export default function DurationSlider({ value, onChange }: Props) {
 
       <input
         type="range"
-        min={15}
-        max={90}
+        min={MIN_DURATION}
+        max={MAX_DURATION}
         step={5}
         value={normalizedValue}
         onInput={e => onChange(normalizeDuration(Number((e.target as HTMLInputElement).value)))}
@@ -45,9 +47,13 @@ export default function DurationSlider({ value, onChange }: Props) {
         }}
       />
 
-      <div className="flex justify-between mt-2">
+      <div className="relative mt-2 h-4">
         {MARKS.map(m => (
-          <span key={m} className={`text-[10px] ${m === normalizedValue ? "text-gold/70" : "text-white/20"}`}>
+          <span
+            key={m}
+            style={{ left: `${((m - MIN_DURATION) / (MAX_DURATION - MIN_DURATION)) * 100}%`, transform: "translateX(-50%)" }}
+            className={`absolute top-0 text-[10px] ${m === normalizedValue ? "text-gold/70" : "text-white/20"}`}
+          >
             {m}s
           </span>
         ))}
