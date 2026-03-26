@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from "react";
 import { usePlayer } from "./hooks/usePlayer";
 import BgScene from "./components/BgScene";
 import LanguageStrip from "./components/LanguageStrip";
+import MoodStrip from "./components/MoodStrip";
 import PlayerCard from "./components/PlayerCard";
 import DurationSlider from "./components/DurationSlider";
 import LikedSongs from "./components/LikedSongs";
@@ -11,9 +12,9 @@ import Toast from "./components/Toast";
 
 export default function Home() {
   const {
-    song, status, progress, elapsed, clipDur, lang, liked, discoverError, discoverWarning, isFullSong, fullDuration, canPrev, isPaused,
-    setClipDur, loadLang, next, prev, togglePause, toggleLike, isLiked, playFullCurrent,
-  } = usePlayer("english");
+    song, status, progress, elapsed, clipDur, lang, mood, liked, discoverError, discoverWarning, isFullSong, fullDuration, canPrev, isPaused,
+    setClipDur, loadLang, loadMood, next, prev, togglePause, toggleLike, isLiked, playFullCurrent,
+  } = usePlayer("malayalam", "dance");
 
   const [toastMsg,  setToastMsg]  = useState("");
   const [toastVis,  setToastVis]  = useState(false);
@@ -103,6 +104,7 @@ export default function Home() {
 
         {/* Language selector */}
         <LanguageStrip active={lang} onChange={loadLang} />
+        <MoodStrip active={mood} onChange={loadMood} />
 
         {discoverError && (
           <div className="w-full mt-3 mb-1 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-[12px] text-red-100">

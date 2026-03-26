@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Language, Song } from "@/app/data/songs";
+import { Language, Mood, Song } from "@/app/data/songs";
 
 const YOUTUBE_DATA_API_BASE = "https://www.googleapis.com/youtube/v3/videos";
 const YOUTUBE_SEARCH_API_BASE = "https://www.googleapis.com/youtube/v3/search";
@@ -15,12 +15,36 @@ const REGION_BY_LANGUAGE: Record<Language, string> = {
 };
 
 const LANGUAGE_QUERY_BY_LANGUAGE: Record<Language, string> = {
-  english: "english songs",
-  hindi: "hindi songs",
-  malayalam: "malayalam songs",
-  tamil: "tamil songs",
-  telugu: "telugu songs",
-  kannada: "kannada songs",
+  english: "english music",
+  hindi: "hindi music",
+  malayalam: "malayalam music",
+  tamil: "tamil music",
+  telugu: "telugu music",
+  kannada: "kannada music",
+};
+
+const MOOD_QUERY_SUFFIX_BY_MOOD: Record<Mood, string> = {
+  dance: "dance mix songs",
+  drive: "drive mix songs",
+  calm: "calm relaxing songs",
+};
+
+const INCLUDE_HINTS_BY_LANGUAGE: Record<Language, string[]> = {
+  english: [],
+  hindi: ["hindi", "bollywood", "हिंदी", "गीत"],
+  malayalam: ["malayalam", "മലയാളം"],
+  tamil: ["tamil", "தமிழ்"],
+  telugu: ["telugu", "తెలుగు"],
+  kannada: ["kannada", "ಕನ್ನಡ"],
+};
+
+const EXCLUDE_HINTS_BY_LANGUAGE: Record<Language, string[]> = {
+  english: ["hindi", "malayalam", "tamil", "telugu", "kannada", "punjabi"],
+  hindi: ["malayalam", "tamil", "telugu", "kannada"],
+  malayalam: ["hindi", "tamil", "telugu", "kannada", "punjabi"],
+  tamil: ["hindi", "malayalam", "telugu", "kannada", "punjabi"],
+  telugu: ["hindi", "malayalam", "tamil", "kannada", "punjabi"],
+  kannada: ["hindi", "malayalam", "tamil", "telugu", "punjabi"],
 };
 
 const RELEVANCE_LANGUAGE_BY_LANGUAGE: Record<Language, string> = {
@@ -143,21 +167,45 @@ const DEFAULT_YOUTUBE_DAILY_LIMIT = 10_000;
 
 declare global {
   // eslint-disable-next-line no-var
-  var __playitSongCache: Record<Language, CachedLanguagePool> | undefined;
+  var __playitSongCache: Record<Language, Record<Mood, CachedLanguagePool>> | undefined;
   // eslint-disable-next-line no-var
-  var __playitSongRefresh: Partial<Record<Language, Promise<void>>> | undefined;
+  var __playitSongRefresh: Partial<Record<string, Promise<void>>> | undefined;
   // eslint-disable-next-line no-var
   var __playitQuotaTracker: QuotaTracker | undefined;
 }
 
-function initCache(): Record<Language, CachedLanguagePool> {
+function initCache(): Record<Language, Record<Mood, CachedLanguagePool>> {
   return {
-    english: { songs: [...FALLBACK_SONGS.english], fetchedAt: 0, quotaBlockedUntil: 0 },
-    hindi: { songs: [...FALLBACK_SONGS.hindi], fetchedAt: 0, quotaBlockedUntil: 0 },
-    malayalam: { songs: [...FALLBACK_SONGS.malayalam], fetchedAt: 0, quotaBlockedUntil: 0 },
-    tamil: { songs: [...FALLBACK_SONGS.tamil], fetchedAt: 0, quotaBlockedUntil: 0 },
-    telugu: { songs: [...FALLBACK_SONGS.telugu], fetchedAt: 0, quotaBlockedUntil: 0 },
-    kannada: { songs: [...FALLBACK_SONGS.kannada], fetchedAt: 0, quotaBlockedUntil: 0 },
+    english: {
+      dance: { songs: [...FALLBACK_SONGS.english], fetchedAt: 0, quotaBlockedUntil: 0 },
+      drive: { songs: [...FALLBACK_SONGS.english], fetchedAt: 0, quotaBlockedUntil: 0 },
+      calm: { songs: [...FALLBACK_SONGS.english], fetchedAt: 0, quotaBlockedUntil: 0 },
+    },
+    hindi: {
+      dance: { songs: [...FALLBACK_SONGS.hindi], fetchedAt: 0, quotaBlockedUntil: 0 },
+      drive: { songs: [...FALLBACK_SONGS.hindi], fetchedAt: 0, quotaBlockedUntil: 0 },
+      calm: { songs: [...FALLBACK_SONGS.hindi], fetchedAt: 0, quotaBlockedUntil: 0 },
+    },
+    malayalam: {
+      dance: { songs: [...FALLBACK_SONGS.malayalam], fetchedAt: 0, quotaBlockedUntil: 0 },
+      drive: { songs: [...FALLBACK_SONGS.malayalam], fetchedAt: 0, quotaBlockedUntil: 0 },
+      calm: { songs: [...FALLBACK_SONGS.malayalam], fetchedAt: 0, quotaBlockedUntil: 0 },
+    },
+    tamil: {
+      dance: { songs: [...FALLBACK_SONGS.tamil], fetchedAt: 0, quotaBlockedUntil: 0 },
+      drive: { songs: [...FALLBACK_SONGS.tamil], fetchedAt: 0, quotaBlockedUntil: 0 },
+      calm: { songs: [...FALLBACK_SONGS.tamil], fetchedAt: 0, quotaBlockedUntil: 0 },
+    },
+    telugu: {
+      dance: { songs: [...FALLBACK_SONGS.telugu], fetchedAt: 0, quotaBlockedUntil: 0 },
+      drive: { songs: [...FALLBACK_SONGS.telugu], fetchedAt: 0, quotaBlockedUntil: 0 },
+      calm: { songs: [...FALLBACK_SONGS.telugu], fetchedAt: 0, quotaBlockedUntil: 0 },
+    },
+    kannada: {
+      dance: { songs: [...FALLBACK_SONGS.kannada], fetchedAt: 0, quotaBlockedUntil: 0 },
+      drive: { songs: [...FALLBACK_SONGS.kannada], fetchedAt: 0, quotaBlockedUntil: 0 },
+      calm: { songs: [...FALLBACK_SONGS.kannada], fetchedAt: 0, quotaBlockedUntil: 0 },
+    },
   };
 }
 
@@ -275,10 +323,34 @@ function pickPeakByDuration(durationSeconds: number): number {
   return Math.floor(Math.random() * (maxStart - minStart + 1)) + minStart;
 }
 
-function normalizeTrendingItem(item: YouTubeTrendingItem): Song | null {
+function hasLanguageScript(text: string, language: Language): boolean {
+  if (language === "malayalam") return /[\u0D00-\u0D7F]/.test(text);
+  if (language === "tamil") return /[\u0B80-\u0BFF]/.test(text);
+  if (language === "telugu") return /[\u0C00-\u0C7F]/.test(text);
+  if (language === "kannada") return /[\u0C80-\u0CFF]/.test(text);
+  if (language === "hindi") return /[\u0900-\u097F]/.test(text);
+  return false;
+}
+
+function matchesLanguageHeuristics(item: YouTubeTrendingItem, language: Language): boolean {
+  const source = `${item.snippet?.title ?? ""} ${item.snippet?.channelTitle ?? ""}`;
+  const lowered = source.toLowerCase();
+
+  const excluded = EXCLUDE_HINTS_BY_LANGUAGE[language];
+  if (excluded.some((hint) => lowered.includes(hint))) return false;
+
+  if (language === "english") return true;
+  if (hasLanguageScript(source, language)) return true;
+
+  const includes = INCLUDE_HINTS_BY_LANGUAGE[language];
+  return includes.some((hint) => lowered.includes(hint.toLowerCase()));
+}
+
+function normalizeTrendingItem(item: YouTubeTrendingItem, language: Language): Song | null {
   if (!item.id || !item.snippet?.title) return null;
   if (item.status?.embeddable === false) return null;
   if (item.snippet.liveBroadcastContent && item.snippet.liveBroadcastContent !== "none") return null;
+  if (!matchesLanguageHeuristics(item, language)) return null;
 
   const normalizedTitle = item.snippet.title.toLowerCase();
   if (
@@ -296,6 +368,12 @@ function normalizeTrendingItem(item: YouTubeTrendingItem): Song | null {
     artist: item.snippet.channelTitle ?? "Unknown Artist",
     peak: pickPeakByDuration(parseIsoDurationToSeconds(item.contentDetails?.duration)),
   };
+}
+
+function buildLanguageMoodQuery(language: Language, mood: Mood): string {
+  const base = `${LANGUAGE_QUERY_BY_LANGUAGE[language]} ${MOOD_QUERY_SUFFIX_BY_MOOD[mood]}`;
+  const exclusions = EXCLUDE_HINTS_BY_LANGUAGE[language].map((hint) => `-${hint}`).join(" ");
+  return `${base} ${exclusions}`.trim();
 }
 
 async function fetchVideoDetailsByIds(videoIds: string[], apiKey: string): Promise<YouTubeTrendingItem[]> {
@@ -323,14 +401,14 @@ async function fetchVideoDetailsByIds(videoIds: string[], apiKey: string): Promi
   return Array.isArray(payload.items) ? payload.items : [];
 }
 
-async function fetchLanguageSearchVideoIds(language: Language, apiKey: string): Promise<string[]> {
+async function fetchLanguageSearchVideoIds(language: Language, mood: Mood, apiKey: string): Promise<string[]> {
   recordQuotaUnits(SEARCH_API_UNITS);
   const url = new URL(YOUTUBE_SEARCH_API_BASE);
   url.searchParams.set("part", "id");
   url.searchParams.set("type", "video");
   url.searchParams.set("videoCategoryId", MUSIC_CATEGORY_ID);
   url.searchParams.set("regionCode", REGION_BY_LANGUAGE[language]);
-  url.searchParams.set("q", LANGUAGE_QUERY_BY_LANGUAGE[language]);
+  url.searchParams.set("q", buildLanguageMoodQuery(language, mood));
   url.searchParams.set("relevanceLanguage", RELEVANCE_LANGUAGE_BY_LANGUAGE[language]);
   url.searchParams.set("order", "viewCount");
   url.searchParams.set("maxResults", "50");
@@ -358,12 +436,12 @@ async function fetchLanguageSearchVideoIds(language: Language, apiKey: string): 
   return Array.from(uniqueIds);
 }
 
-async function fetchTrendingMusicVideos(language: Language, apiKey: string): Promise<Song[]> {
-  const videoIds = await fetchLanguageSearchVideoIds(language, apiKey);
+async function fetchTrendingMusicVideos(language: Language, mood: Mood, apiKey: string): Promise<Song[]> {
+  const videoIds = await fetchLanguageSearchVideoIds(language, mood, apiKey);
   const details = await fetchVideoDetailsByIds(videoIds, apiKey);
   const items = Array.isArray(details) ? details : [];
   return items
-    .map((item) => normalizeTrendingItem(item))
+    .map((item) => normalizeTrendingItem(item, language))
     .filter((song): song is Song => Boolean(song));
 }
 
@@ -371,18 +449,19 @@ function isQuotaRelated(message: string): boolean {
   return /quotaExceeded|dailyLimitExceeded/i.test(message);
 }
 
-async function refreshLanguagePool(language: Language, apiKey: string): Promise<void> {
-  const existingRefresh = SONG_REFRESH[language];
+async function refreshLanguagePool(language: Language, mood: Mood, apiKey: string): Promise<void> {
+  const cacheKey = `${language}:${mood}`;
+  const existingRefresh = SONG_REFRESH[cacheKey];
   if (existingRefresh) {
     await existingRefresh;
     return;
   }
 
   const run = (async () => {
-    const cache = SONG_CACHE[language];
+    const cache = SONG_CACHE[language][mood];
     const now = Date.now();
     try {
-      const trending = await fetchTrendingMusicVideos(language, apiKey);
+      const trending = await fetchTrendingMusicVideos(language, mood, apiKey);
       cache.songs = mergeSongs(cache.songs, trending);
       cache.fetchedAt = now;
       cache.lastError = undefined;
@@ -396,11 +475,11 @@ async function refreshLanguagePool(language: Language, apiKey: string): Promise<
     }
   })();
 
-  SONG_REFRESH[language] = run;
+  SONG_REFRESH[cacheKey] = run;
   try {
     await run;
   } finally {
-    delete SONG_REFRESH[language];
+    delete SONG_REFRESH[cacheKey];
   }
 }
 
@@ -413,6 +492,13 @@ function parseLanguage(langParam: string | null): Language | null {
   if (langParam === "telugu") return "telugu";
   if (langParam === "kannada") return "kannada";
   return null;
+}
+
+function parseMood(moodParam: string | null): Mood {
+  if (moodParam === "dance") return "dance";
+  if (moodParam === "drive") return "drive";
+  if (moodParam === "calm") return "calm";
+  return "dance";
 }
 
 export async function GET(request: NextRequest) {
@@ -428,6 +514,7 @@ export async function GET(request: NextRequest) {
   if (!lang) {
     return NextResponse.json({ error: "Invalid language" }, { status: 400 });
   }
+  const mood = parseMood(request.nextUrl.searchParams.get("mood"));
 
   const requestedLimit = Number(request.nextUrl.searchParams.get("limit") ?? 10);
   const limit = Math.max(1, Math.min(20, Number.isFinite(requestedLimit) ? requestedLimit : 10));
@@ -439,7 +526,7 @@ export async function GET(request: NextRequest) {
       .map((id) => id.trim())
       .filter(Boolean),
   );
-  const cache = SONG_CACHE[lang];
+  const cache = SONG_CACHE[lang][mood];
   const now = Date.now();
   const cacheIsFresh = cache.songs.length > 0 && (now - cache.fetchedAt) < CACHE_TTL_MS;
   const quotaBackoffActive = now < cache.quotaBlockedUntil;
@@ -457,7 +544,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    await refreshLanguagePool(lang, apiKey);
+    await refreshLanguagePool(lang, mood, apiKey);
     const songs = pickSongsFromPool(cache.songs, excluded, limit);
     return NextResponse.json({ songs, quota: getQuotaStatus() });
   } catch (error) {

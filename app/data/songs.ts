@@ -1,4 +1,5 @@
 export type Language = "english" | "hindi" | "malayalam" | "tamil" | "telugu" | "kannada";
+export type Mood = "dance" | "drive" | "calm";
 
 export interface Song {
   id: string;
@@ -15,6 +16,12 @@ export const LANGUAGES: { key: Language; label: string; flag: string }[] = [
   { key: "tamil",     label: "Tamil",     flag: "🎵" },
   { key: "telugu",    label: "Telugu",    flag: "⭐" },
   { key: "kannada",   label: "Kannada",   flag: "🎶" },
+];
+
+export const MOODS: { key: Mood; label: string; icon: string }[] = [
+  { key: "dance", label: "Dance Mix", icon: "💃" },
+  { key: "drive", label: "Drive Mix", icon: "🚗" },
+  { key: "calm", label: "Calm", icon: "🌙" },
 ];
 
 export const LANGUAGE_SEARCH_TERMS: Record<Language, string[]> = {

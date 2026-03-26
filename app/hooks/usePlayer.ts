@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Language, Song } from "../data/songs";
+import { Language, Mood, Song } from "../data/songs";
 
 interface YTPlayerLike {
   setVolume: (value: number) => void;
@@ -59,7 +59,7 @@ export interface QuotaInfo {
   usagePct: number;
 }
 
-export function usePlayer(initialLang: Language = "english") {
+export function usePlayer(initialLang: Language = "malayalam", initialMood: Mood = "dance") {
   const playerRef       = useRef<YTPlayerLike | null>(null);
   const ytReadyRef      = useRef(false);
   const playingRef      = useRef(false);
@@ -72,20 +72,15 @@ export function usePlayer(initialLang: Language = "english") {
   const historyRef      = useRef<Song[]>([]);
   const clipDurRef      = useRef(30);
   const langRef         = useRef<Language>(initialLang);
+  const moodRef         = useRef<Mood>(initialMood);
   const songRef         = useRef<Song | null>(null);
-  const seenByLangRef   = useRef<Record<Language, Set<string>>>({
-    english: new Set<string>(),
-    hindi: new Set<string>(),
-    malayalam: new Set<string>(),
-    tamil: new Set<string>(),
-    telugu: new Set<string>(),
-    kannada: new Set<string>(),
-  });
+  const seenByContextRef = useRef<Record<string, Set<string>>>({});
   const loadingNextRef  = useRef(false);
   const fullModeRef     = useRef(false);
   const discoverErrorRef = useRef<string | null>(null);
 
   const [lang,      setLangState]   = useState<Language>(initialLang);
+  const [mood,      setMoodState]   = useState<Mood>(initialMood);
   const [song,      setSong]        = useState<Song | null>(null);
   const [status,    setStatus]      = useState<PlayerStatus>("idle");
   const [progress,  setProgress]    = useState(0);   // 0-100
@@ -105,12 +100,24 @@ export function usePlayer(initialLang: Language = "english") {
   }, [lang]);
 
   useEffect(() => {
+    moodRef.current = mood;
+  }, [mood]);
+
+  useEffect(() => {
     songRef.current = song;
   }, [song]);
 
   useEffect(() => {
     discoverErrorRef.current = discoverError;
   }, [discoverError]);
+
+  const getSeenSet = useCallback((language: Language, selectedMood: Mood) => {
+    const key = `${language}:${selectedMood}`;
+    if (!seenByContextRef.current[key]) {
+      seenByContextRef.current[key] = new Set<string>();
+    }
+    return seenByContextRef.current[key];
+  }, []);
 
   // ── helpers ────────────────────────────────────────────────────────────────
   const clearAll = useCallback(() => {
@@ -131,7 +138,8 @@ export function usePlayer(initialLang: Language = "english") {
     }, 100);
   }, []);
 
-  const fadeOut = useCallback((cb?: () => void) => {
+  const fadeOut = useCallback((cb?: () => void, options?: { stopAfterFade?: boolean }) => {
+    const stopAfterFade = options?.stopAfterFade ?? true;
     setStatus("fading");
     let v = 100;
     if (fadeIntRef.current) clearInterval(fadeIntRef.current);
@@ -140,7 +148,9 @@ export function usePlayer(initialLang: Language = "english") {
       playerRef.current?.setVolume(v);
       if (v <= 0) {
         if (fadeIntRef.current) clearInterval(fadeIntRef.current);
-        playerRef.current?.stopVideo();
+        if (stopAfterFade) {
+          playerRef.current?.stopVideo();
+        }
         cb?.();
       }
     }, 100);
@@ -198,9 +208,10 @@ export function usePlayer(initialLang: Language = "english") {
     }
   }, [clearAll]);
 
-  const discoverSongs = useCallback(async (language: Language, excludeIds: string[], limit = 12) => {
+  const discoverSongs = useCallback(async (language: Language, selectedMood: Mood, excludeIds: string[], limit = 12) => {
     const params = new URLSearchParams({
       lang: language,
+      mood: selectedMood,
       limit: String(limit),
       exclude: excludeIds.slice(-150).join(","),
     });
@@ -221,22 +232,22 @@ export function usePlayer(initialLang: Language = "english") {
     return payload.songs;
   }, []);
 
-  const refillQueue = useCallback(async (language: Language) => {
+  const refillQueue = useCallback(async (language: Language, selectedMood: Mood) => {
     if (queueRef.current.length >= 8) return;
 
-    const seen = seenByLangRef.current[language];
+    const seen = getSeenSet(language, selectedMood);
     const queuedIds = queueRef.current.map((s) => s.id);
-    let discovered = await discoverSongs(language, [...Array.from(seen), ...queuedIds], 14);
+    let discovered = await discoverSongs(language, selectedMood, [...Array.from(seen), ...queuedIds], 14);
 
     // If we exhausted "new" songs for this language, allow reuse so autoplay never stalls.
     if (!discovered.length && seen.size > 0) {
       seen.clear();
-      discovered = await discoverSongs(language, queuedIds, 14);
+      discovered = await discoverSongs(language, selectedMood, queuedIds, 14);
     }
 
     // Last-resort fallback when the API keeps returning narrow/duplicate lists.
     if (!discovered.length) {
-      discovered = await discoverSongs(language, [], 14);
+      discovered = await discoverSongs(language, selectedMood, [], 14);
     }
 
     if (!discovered.length) return;
@@ -246,7 +257,7 @@ export function usePlayer(initialLang: Language = "english") {
       if (queueRef.current.some((q) => q.id === track.id)) continue;
       queueRef.current.push(track);
     }
-  }, [discoverSongs]);
+  }, [discoverSongs, getSeenSet]);
 
   // ── next song ──────────────────────────────────────────────────────────────
   const next = useCallback(async (opts?: { excludeId?: string }) => {
@@ -257,7 +268,8 @@ export function usePlayer(initialLang: Language = "english") {
       clearAll();
 
       const currentLang = langRef.current;
-      const seen = seenByLangRef.current[currentLang];
+      const currentMood = moodRef.current;
+      const seen = getSeenSet(currentLang, currentMood);
 
       if (opts?.excludeId) {
         seen.add(opts.excludeId);
@@ -267,7 +279,7 @@ export function usePlayer(initialLang: Language = "english") {
       while (attempts < 2) {
         if (!queueRef.current.length) {
           setStatus("loading");
-          await refillQueue(currentLang);
+          await refillQueue(currentLang, currentMood);
         }
 
         while (queueRef.current.length) {
@@ -283,7 +295,7 @@ export function usePlayer(initialLang: Language = "english") {
           seen.add(candidate.id);
           playSong(candidate, "clip");
           if (queueRef.current.length < 4) {
-            void refillQueue(currentLang);
+            void refillQueue(currentLang, currentMood);
           }
           return;
         }
@@ -304,7 +316,7 @@ export function usePlayer(initialLang: Language = "english") {
     } finally {
       loadingNextRef.current = false;
     }
-  }, [clearAll, playSong, refillQueue]);
+  }, [clearAll, getSeenSet, playSong, refillQueue]);
 
   // ── schedule clip end ──────────────────────────────────────────────────────
   const scheduleEnd = useCallback(() => {
@@ -315,8 +327,8 @@ export function usePlayer(initialLang: Language = "english") {
       fadeOut(() => {
         setTimeout(() => {
           void next();
-        }, 400);
-      });
+        }, 250);
+      }, { stopAfterFade: true });
     }, wait);
   }, [fadeOut, next]);
 
@@ -350,6 +362,19 @@ export function usePlayer(initialLang: Language = "english") {
   const loadLang = useCallback(async (l: Language) => {
     langRef.current = l;
     setLangState(l);
+    queueRef.current = [];
+    historyRef.current = [];
+    setCanPrev(false);
+    fullModeRef.current = false;
+    setIsFullSong(false);
+    setIsPaused(false);
+    setStatus("loading");
+    await next();
+  }, [next]);
+
+  const loadMood = useCallback(async (m: Mood) => {
+    moodRef.current = m;
+    setMoodState(m);
     queueRef.current = [];
     historyRef.current = [];
     setCanPrev(false);
@@ -494,7 +519,7 @@ export function usePlayer(initialLang: Language = "english") {
   }, [onStateChange]);
 
   return {
-    song, status, progress, elapsed, clipDur, lang, liked, discoverError, discoverWarning, quotaInfo, isFullSong, fullDuration, canPrev, isPaused,
-    setClipDur, loadLang, next, prev, togglePause, toggleLike, isLiked, playFullCurrent,
+    song, status, progress, elapsed, clipDur, lang, mood, liked, discoverError, discoverWarning, quotaInfo, isFullSong, fullDuration, canPrev, isPaused,
+    setClipDur, loadLang, loadMood, next, prev, togglePause, toggleLike, isLiked, playFullCurrent,
   };
 }
